@@ -1,5 +1,23 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+
+// Reverse-map the numeric Html5QrcodeSupportedFormats enum to its string name.
+// Using the enum key lookup avoids the stale/wrong formatName that causes
+// Code 128 to be misreported as UPC-E.
+const FORMAT_NAMES: Record<number, string> = Object.fromEntries(
+  Object.entries(Html5QrcodeSupportedFormats)
+    .filter(([, v]) => typeof v === 'number')
+    .map(([k, v]) => [v as number, k])
+);
+
+function resolveFormatName(decodedResult: { result?: { format?: { format?: number; formatName?: string } } }): string {
+  const numericFormat = decodedResult?.result?.format?.format;
+  if (numericFormat !== undefined && FORMAT_NAMES[numericFormat]) {
+    return FORMAT_NAMES[numericFormat];
+  }
+  // Fallback: use formatName string if numeric lookup fails
+  return decodedResult?.result?.format?.formatName ?? 'UNKNOWN';
+}
 import {
   Camera,
   CameraOff,
@@ -104,16 +122,25 @@ export default function Scanner() {
       await html5QrCode.start(
         { facingMode: 'environment' },
         {
-          fps: 12,
-          qrbox: { width: 260, height: 260 },
-          aspectRatio: 1.0,
+          fps: 15,
+          // Wide rectangular box is essential for 1D barcodes (Code 128, EAN, UPC, etc.).
+          // A square box makes linear barcodes very hard to detect.
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            // For 1D codes: wide & short. For QR/2D: near-square.
+            return {
+              width: Math.min(Math.floor(minEdge * 0.9), 320),
+              height: Math.min(Math.floor(minEdge * 0.4), 150),
+            };
+          },
+          aspectRatio: 1.7778, // 16:9 — better framing for landscape barcodes
           disableFlip: false,
         },
         (decodedText, decodedResult) => {
           if (!isScanningRef.current) return;
 
-          const format =
-            decodedResult?.result?.format?.formatName ?? 'UNKNOWN';
+          // Resolve format from the numeric enum — avoids UPC-E/Code-128 misidentification
+          const format = resolveFormatName(decodedResult);
           const scanResult: ScanResult = { text: decodedText, format };
 
           stopScanner();
@@ -273,28 +300,27 @@ export default function Scanner() {
               </p>
             </div>
 
-            {/* Camera container */}
-            <div className="relative w-full aspect-square rounded-2xl overflow-hidden glass-card border border-slate-700/50">
+            {/* Camera container — 16:9 aspect for better 1D barcode framing */}
+            <div className="relative w-full rounded-2xl overflow-hidden glass-card border border-slate-700/50" style={{ aspectRatio: '16/9' }}>
               {/* Actual scanner element */}
               <div id={SCANNER_ELEMENT_ID} className="w-full h-full" />
 
-              {/* Overlay: viewfinder */}
+              {/* Overlay: wide rectangular viewfinder for 1D barcodes */}
               {!isStarting && (
                 <>
                   <div className="absolute inset-0 pointer-events-none">
-                    <div className="absolute top-0 left-0 right-0 bg-black/50" style={{ height: 'calc(50% - 130px)' }} />
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/50" style={{ height: 'calc(50% - 130px)' }} />
-                    <div
-                      className="absolute bg-black/50"
-                      style={{ top: 'calc(50% - 130px)', left: 0, width: 'calc(50% - 130px)', height: '260px' }}
-                    />
-                    <div
-                      className="absolute bg-black/50"
-                      style={{ top: 'calc(50% - 130px)', right: 0, width: 'calc(50% - 130px)', height: '260px' }}
-                    />
+                    {/* Top shadow */}
+                    <div className="absolute top-0 left-0 right-0 bg-black/50" style={{ height: 'calc(50% - 60px)' }} />
+                    {/* Bottom shadow */}
+                    <div className="absolute bottom-0 left-0 right-0 bg-black/50" style={{ height: 'calc(50% - 60px)' }} />
+                    {/* Left shadow */}
+                    <div className="absolute bg-black/50" style={{ top: 'calc(50% - 60px)', left: 0, width: '5%', height: '120px' }} />
+                    {/* Right shadow */}
+                    <div className="absolute bg-black/50" style={{ top: 'calc(50% - 60px)', right: 0, width: '5%', height: '120px' }} />
+                    {/* Scan window — wide & short for 1D barcodes */}
                     <div
                       className="absolute"
-                      style={{ top: 'calc(50% - 130px)', left: 'calc(50% - 130px)', width: '260px', height: '260px' }}
+                      style={{ top: 'calc(50% - 60px)', left: '5%', right: '5%', height: '120px' }}
                     >
                       <div className="viewfinder-corner tl" />
                       <div className="viewfinder-corner tr" />
